@@ -1,11 +1,12 @@
-import os
 import io
+import os
 import statistics
+
+import google.generativeai as genai
 import pandas as pd
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import google.generativeai as genai
 
 app = FastAPI()
 
@@ -18,14 +19,23 @@ app.add_middleware(
 
 ALLOWED = {".csv", ".bin"}
 MAX_SIZE = 50 * 1024 * 1024
-IMPORTANT_COLUMNS = ["RPM", "AFR", "Lambda", "Throttle", "Pedal", "Accelerator", "Boost", "MAP", "MAF", "Airflow", "Temp", "WBO2"]
+IMPORTANT_COLUMNS = [
+    "RPM",
+    "AFR",
+    "Lambda",
+    "Throttle",
+    "Pedal",
+    "Accelerator",
+    "Boost",
+    "MAP",
+    "MAF",
+    "Airflow",
+    "Temp",
+    "WBO2",
+]
 
 # In-memory store — this is where parsed data lives
-data_store = {
-    "type": None,
-    "filename": None,
-    "data": None
-}
+data_store = {"type": None, "filename": None, "data": None}
 
 # Chat history for context handling
 chat_history = []
@@ -48,7 +58,7 @@ def get_data():
     return {
         "type": data_store["type"],
         "filename": data_store["filename"],
-        "data": data_store["data"]
+        "data": data_store["data"],
     }
 
 
@@ -70,7 +80,7 @@ def extract_columns(df: pd.DataFrame) -> dict:
     return {
         "extracted": extracted,
         "missing_columns": missing,
-        "all_columns": list(df.columns)
+        "all_columns": list(df.columns),
     }
 
 
@@ -81,7 +91,7 @@ def run_diagnostics(df: pd.DataFrame, y_map: dict) -> dict:
     """
     alerts = []
     score = 100
-    
+
     # 1. Reach sensors from fuzzy map
     rpm_c = y_map.get("RPM")
     co_c = y_map.get("CO")
@@ -93,29 +103,37 @@ def run_diagnostics(df: pd.DataFrame, y_map: dict) -> dict:
 
     # Guard: Need at least RPM to do anything
     if not rpm_c or rpm_c not in df.columns:
-        return {"status": "Undetermined", "health_score": 0, "alerts": ["Incomplete sensor data for diagnostics"]}
+        return {
+            "status": "Undetermined",
+            "health_score": 0,
+            "alerts": ["Incomplete sensor data for diagnostics"],
+        }
 
     try:
         # Convert columns to numeric for calculation
         temp_df = df.copy()
         for col in [rpm_c, co_c, hc_c, lambda_c, map_c, cons_c, tps_c]:
             if col and col in temp_df.columns:
-                temp_df[col] = pd.to_numeric(temp_df[col], errors='coerce')
-        
+                temp_df[col] = pd.to_numeric(temp_df[col], errors="coerce")
+
         # Rule 1: Rich Burn (Emission Based)
         if co_c and hc_c:
             rich_events = temp_df[(temp_df[co_c] > 2.8) & (temp_df[hc_c] > 230)]
             if len(rich_events) > (len(temp_df) * 0.05):
                 alerts.append("Critical: Persistent Rich Burn Detected (High CO/HC)")
                 score -= 40
-        
+
         # Rule 2: Efficiency Ratio
         if cons_c and rpm_c:
             # Look for high consumption at cruising/low-load
             # Analysis threshold was 0.0022 L/H per RPM
-            inefficient = temp_df[(temp_df[rpm_c] > 1000) & (temp_df[cons_c] / temp_df[rpm_c] > 0.0025)]
+            inefficient = temp_df[
+                (temp_df[rpm_c] > 1000) & (temp_df[cons_c] / temp_df[rpm_c] > 0.0025)
+            ]
             if len(inefficient) > (len(temp_df) * 0.1):
-                alerts.append("Warning: Low Fuel Efficiency (High Consumption/RPM ratio)")
+                alerts.append(
+                    "Warning: Low Fuel Efficiency (High Consumption/RPM ratio)"
+                )
                 score -= 15
 
         # Rule 3: Lambda vs Load Stability
@@ -128,22 +146,28 @@ def run_diagnostics(df: pd.DataFrame, y_map: dict) -> dict:
 
         # Rule 4: Load Correlation (High RPM, low emissions but low throttle)
         if rpm_c and co_c and tps_c:
-            stress_anomaly = temp_df[(temp_df[rpm_c] > 3000) & (temp_df[co_c] < 1.0) & (temp_df[tps_c] < 10)]
+            stress_anomaly = temp_df[
+                (temp_df[rpm_c] > 3000) & (temp_df[co_c] < 1.0) & (temp_df[tps_c] < 10)
+            ]
             if len(stress_anomaly) > (len(temp_df) * 0.05):
-                alerts.append("Inconsistency: High RPM cruise with leaner emissions than expected")
+                alerts.append(
+                    "Inconsistency: High RPM cruise with leaner emissions than expected"
+                )
                 score -= 10
 
     except Exception as e:
         alerts.append(f"Diagnostic Engine Error: {str(e)}")
 
     status = "Normal"
-    if score < 60: status = "Critical"
-    elif score < 90: status = "Warning"
+    if score < 60:
+        status = "Critical"
+    elif score < 90:
+        status = "Warning"
 
     return {
         "status": status,
         "health_score": max(0, score),
-        "alerts": list(set(alerts)) # Deduplicate
+        "alerts": list(set(alerts)),  # Deduplicate
     }
 
 
@@ -170,18 +194,31 @@ def parse_csv(contents: bytes, filename: str) -> dict:
                         header_idx = i + 1
                         break
                 if header_idx > 0:
-                    df = pd.read_csv(io.StringIO(text), skiprows=header_idx, names=channels, on_bad_lines='skip', engine='python')
+                    df = pd.read_csv(
+                        io.StringIO(text),
+                        skiprows=header_idx,
+                        names=channels,
+                        on_bad_lines="skip",
+                        engine="python",
+                    )
                 else:
                     raise filter_error
             else:
-                comma_counts = [line.count(',') for line in lines[:250]]
+                comma_counts = [line.count(",") for line in lines[:250]]
                 max_commas = max(comma_counts) if comma_counts else 0
 
                 if max_commas > 0:
                     header_idx = comma_counts.index(max_commas)
-                    df = pd.read_csv(io.StringIO(text), skiprows=header_idx, on_bad_lines='skip', engine='python')
+                    df = pd.read_csv(
+                        io.StringIO(text),
+                        skiprows=header_idx,
+                        on_bad_lines="skip",
+                        engine="python",
+                    )
                 else:
-                    df = pd.read_csv(io.StringIO(text), on_bad_lines='skip', engine='python')
+                    df = pd.read_csv(
+                        io.StringIO(text), on_bad_lines="skip", engine="python"
+                    )
 
         column_data = extract_columns(df)
 
@@ -196,31 +233,61 @@ def parse_csv(contents: bytes, filename: str) -> dict:
 
             if has_rpm or "%DataLog%" in text_str[:200]:
                 chart_type = "line"
-                time_cols = [c for c in df.columns if "time" in str(c).lower() or "date" in str(c).lower()]
+                time_cols = [
+                    c
+                    for c in df.columns
+                    if "time" in str(c).lower() or "date" in str(c).lower()
+                ]
                 time_col = time_cols[0] if time_cols else df.columns[0]
                 rpm_col = next((c for c in df.columns if "rpm" in str(c).lower()), None)
 
                 # Intelligent Category Mapping (Pick best match for each required metric)
-                y_map = {} # Category -> Original Column Name
+                y_map = {}  # Category -> Original Column Name
                 mapping = {
                     "RPM": ["rpm", "engine speed"],
                     "AFR": ["afr", "lambda", "air fuel", "wbo2", "wideband"],
-                    "Throttle Position": ["throttle", "pedal", "accelerator", "aps", "pps", "tps"],
-                    "Air Intake Temp": ["intake air temp", "iat", "air charge temp", "intake air temperature", "act"],
-                    "MAP": ["map", "manifold pressure", "manifold absolute pressure", "pressure", "boost"],
+                    "Throttle Position": [
+                        "throttle",
+                        "pedal",
+                        "accelerator",
+                        "aps",
+                        "pps",
+                        "tps",
+                    ],
+                    "Air Intake Temp": [
+                        "intake air temp",
+                        "iat",
+                        "air charge temp",
+                        "intake air temperature",
+                        "act",
+                    ],
+                    "MAP": [
+                        "map",
+                        "manifold pressure",
+                        "manifold absolute pressure",
+                        "pressure",
+                        "boost",
+                    ],
                     "MAF": ["maf", "airflow", "air flow", "mass flow", "mass air flow"],
                     "CO": ["co ", "carbon monoxide", "emissions co"],
                     "HC": ["hc ", "hydrocarbon", "hydrocarbons", "emissions hc"],
-                    "Consumption": ["consumption", "fuel flow", "fuel consumption", "flow_lh", "consumption_lh"]
+                    "Consumption": [
+                        "consumption",
+                        "fuel flow",
+                        "fuel consumption",
+                        "flow_lh",
+                        "consumption_lh",
+                    ],
                 }
-                
+
                 for cat, keywords in mapping.items():
                     for kw in keywords:
                         for c in df.columns:
                             if kw in str(c).lower():
                                 y_map[cat] = c
                                 break
-                        if cat in y_map: break
+                        if cat in y_map:
+                            break
 
                 step = max(1, len(df) // 150)
                 df_sampled = df.iloc[::step].copy()
@@ -240,21 +307,31 @@ def parse_csv(contents: bytes, filename: str) -> dict:
 
                 if rpm_col and y_map:
                     df_running = df.copy()
-                    df_running[rpm_col] = pd.to_numeric(df_running[rpm_col], errors='coerce').fillna(0)
+                    df_running[rpm_col] = pd.to_numeric(
+                        df_running[rpm_col], errors="coerce"
+                    ).fillna(0)
                     df_running = df_running[df_running[rpm_col] >= 500]
 
                     if not df_running.empty:
-                        df_running['RPM_Bin'] = (df_running[rpm_col] // 50) * 50
+                        df_running["RPM_Bin"] = (df_running[rpm_col] // 50) * 50
                         # For the RPM chart, we exclude RPM from the Y axis to avoid a redundant diagonal
-                        chart_y_cols = [col for cat, col in y_map.items() if cat != "RPM"]
-                        chart_y_cats = {col: cat for cat, col in y_map.items() if cat != "RPM"}
-                        
-                        grouped = df_running.groupby('RPM_Bin')[chart_y_cols].mean().reset_index()
-                        grouped = grouped.sort_values(by='RPM_Bin')
+                        chart_y_cols = [
+                            col for cat, col in y_map.items() if cat != "RPM"
+                        ]
+                        chart_y_cats = {
+                            col: cat for cat, col in y_map.items() if cat != "RPM"
+                        }
+
+                        grouped = (
+                            df_running.groupby("RPM_Bin")[chart_y_cols]
+                            .mean()
+                            .reset_index()
+                        )
+                        grouped = grouped.sort_values(by="RPM_Bin")
 
                         chart_rpm = []
                         for _, row in grouped.iterrows():
-                            point_rpm = {"name": int(row['RPM_Bin'])}
+                            point_rpm = {"name": int(row["RPM_Bin"])}
                             for col in chart_y_cols:
                                 try:
                                     val = float(row[col])
@@ -265,9 +342,11 @@ def parse_csv(contents: bytes, filename: str) -> dict:
                             chart_rpm.append(point_rpm)
 
             else:
-                df_cleaned = df.dropna(axis=1, how='all')
-                num_cols = df_cleaned.select_dtypes(include=['number']).columns.tolist()
-                cat_cols = df_cleaned.select_dtypes(include=['object', 'category']).columns.tolist()
+                df_cleaned = df.dropna(axis=1, how="all")
+                num_cols = df_cleaned.select_dtypes(include=["number"]).columns.tolist()
+                cat_cols = df_cleaned.select_dtypes(
+                    include=["object", "category"]
+                ).columns.tolist()
 
                 metric_col = None
                 for col in num_cols:
@@ -287,11 +366,18 @@ def parse_csv(contents: bytes, filename: str) -> dict:
                     group_col = cat_cols[0]
 
                 if metric_col and group_col:
-                    grouped = df_cleaned.groupby(group_col)[metric_col].sum().reset_index()
-                    top_10 = grouped.sort_values(by=metric_col, ascending=False).head(10)
+                    grouped = (
+                        df_cleaned.groupby(group_col)[metric_col].sum().reset_index()
+                    )
+                    top_10 = grouped.sort_values(by=metric_col, ascending=False).head(
+                        10
+                    )
 
                     chart_data = [
-                        {"name": str(row[group_col])[:30], "value": float(row[metric_col])}
+                        {
+                            "name": str(row[group_col])[:30],
+                            "value": float(row[metric_col]),
+                        }
                         for _, row in top_10.iterrows()
                         if pd.notna(row[metric_col])
                     ]
@@ -302,14 +388,14 @@ def parse_csv(contents: bytes, filename: str) -> dict:
         # --- FIX 1: Compute full-dataframe per-column stats for AI context ---
         column_stats = {}
         for col in df.columns:
-            numeric_series = pd.to_numeric(df[col], errors='coerce').dropna()
+            numeric_series = pd.to_numeric(df[col], errors="coerce").dropna()
             if len(numeric_series) > 0:
                 vals = numeric_series.tolist()
                 column_stats[col] = {
                     "min": round(float(min(vals)), 3),
                     "max": round(float(max(vals)), 3),
                     "avg": round(float(sum(vals) / len(vals)), 3),
-                    "count": len(vals)
+                    "count": len(vals),
                 }
 
         return {
@@ -324,35 +410,31 @@ def parse_csv(contents: bytes, filename: str) -> dict:
             "column_stats": column_stats,
             "chart_data": chart_data,
             "chart_rpm": chart_rpm,
-            "diagnostics": run_diagnostics(df, y_map)
+            "diagnostics": run_diagnostics(df, y_map),
         }
     except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Failed to parse CSV: {str(e)}"
-        )
+        raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {str(e)}")
 
 
 def parse_bin(contents: bytes, filename: str) -> dict:
     try:
         preview_bytes = contents[:256]
-        hex_preview = " ".join([
-            contents[:256].hex()[i:i+2]
-            for i in range(0, len(preview_bytes.hex()), 2)
-        ])
+        hex_preview = " ".join(
+            [
+                contents[:256].hex()[i : i + 2]
+                for i in range(0, len(preview_bytes.hex()), 2)
+            ]
+        )
         return {
             "type": "bin",
             "filename": filename,
             "size": len(contents),
             "total_bytes": len(contents),
             "hex_preview": hex_preview,
-            "preview_length": len(preview_bytes)
+            "preview_length": len(preview_bytes),
         }
     except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Failed to parse BIN: {str(e)}"
-        )
+        raise HTTPException(status_code=400, detail=f"Failed to parse BIN: {str(e)}")
 
 
 # --- FIX 1: Statistical summary builder for AI context ---
@@ -371,7 +453,7 @@ def build_file_context(store: dict) -> str:
     lines = [
         f"Uploaded CSV: {d['filename']}",
         f"Total rows: {d['rows']} | Columns: {', '.join(d['all_columns'][:30])}",
-        ""
+        "",
     ]
 
     # Full-dataframe column stats (computed in parse_csv above)
@@ -405,7 +487,9 @@ def build_file_context(store: dict) -> str:
                     f"Catalyst / plug fouling risk."
                 )
             if stats["max"] <= 15.0 and stats["min"] >= 10.5:
-                lines.append(f"  ✓ {col} range {stats['min']}–{stats['max']} looks normal.")
+                lines.append(
+                    f"  ✓ {col} range {stats['min']}–{stats['max']} looks normal."
+                )
 
         # Ignition / timing checks
         if "ignition" in clow or "timing" in clow or "advance" in clow:
@@ -428,7 +512,9 @@ def build_file_context(store: dict) -> str:
                 lines.append(f"  ✓ {col} max {stats['max']} psi within range.")
 
     if not found_flags:
-        lines.append("  No AFR, Lambda, Boost, or Timing columns detected for safety checks.")
+        lines.append(
+            "  No AFR, Lambda, Boost, or Timing columns detected for safety checks."
+        )
 
     return "\n".join(lines)
 
@@ -439,8 +525,7 @@ async def upload_file(file: UploadFile = File(...)):
 
     if ext not in ALLOWED:
         raise HTTPException(
-            status_code=400,
-            detail=f"'{ext}' not allowed. Upload .csv or .bin only."
+            status_code=400, detail=f"'{ext}' not allowed. Upload .csv or .bin only."
         )
 
     contents = await file.read()
@@ -484,18 +569,18 @@ async def debug_endpoint():
             "shape_validation": {
                 "total_rows_mapped": ds.get("rows", 0),
                 "total_columns": len(ds.get("all_columns", [])),
-                "arrays_symmetrical": True
+                "arrays_symmetrical": True,
             },
             "cleanliness_metrics": {
                 "nan_sweeps_completed": "Passed securely via .fillna('')",
                 "null_values_remaining": 0,
-                "garbage_strings_filtered": True
-            }
+                "garbage_strings_filtered": True,
+            },
         },
         "column_stats": ds.get("column_stats", {}),
         "safety_context": build_file_context(data_store),
         "sanity_metrics": ds.get("extracted", "N/A"),
-        "raw_preview_sample": ds.get("preview", [])[:3]
+        "raw_preview_sample": ds.get("preview", [])[:3],
     }
 
 
@@ -509,13 +594,11 @@ async def chat_endpoint(req: ChatRequest):
     system_instruction = (
         "You are a senior ECU tuning engineer with 20 years of experience on high-performance engines. "
         "You prioritize engine safety above everything else.\n\n"
-
         "DANGEROUS THRESHOLDS YOU MUST FLAG:\n"
         "- AFR > 15.0 under any load = dangerously lean, risk of piston damage\n"
         "- AFR < 10.5 = excessively rich, fouled plugs, catalyst damage\n"
         "- Timing advance > 35° at high RPM = detonation / knock risk\n"
         "- Boost > 20 psi on a stock internals map = overboost\n\n"
-
         "RESPONSE RULES:\n"
         "1. If the data contains a dangerous value, lead with a WARNING and cite the exact number.\n"
         "2. Use tuning vocabulary: MAP (Manifold Pressure), MAF (Airflow), Open Loop, Closed Loop, "
@@ -523,18 +606,20 @@ async def chat_endpoint(req: ChatRequest):
         "3. If no file is uploaded, say so clearly and ask the user to upload a log.\n"
         "4. Keep responses concise — bullet points for issues, one paragraph max for explanations.\n"
         "5. Always end with a single actionable recommendation (e.g. 'Richen cells 4000–5000 RPM by 5%').\n\n"
-
         f"CURRENT FILE DATA:\n{file_context}"
     )
 
-    active_api_key = req.api_key.strip() if req.api_key and req.api_key.strip() else os.getenv("GEMINI_API_KEY", "dummy-key-for-local")
+    active_api_key = (
+        req.api_key.strip()
+        if req.api_key and req.api_key.strip()
+        else os.getenv("GEMINI_API_KEY", "dummy-key-for-local")
+    )
 
     try:
         genai.configure(api_key=active_api_key)
 
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            system_instruction=system_instruction
+            model_name="gemini-2.5-flash", system_instruction=system_instruction
         )
 
         # Convert internal chat history to Gemini format
@@ -555,7 +640,11 @@ async def chat_endpoint(req: ChatRequest):
         return {"reply": ai_reply}
 
     except Exception as e:
-        if "API_KEY_INVALID" in str(e) or "authentication" in str(e).lower() or "dummy" in active_api_key:
+        if (
+            "API_KEY_INVALID" in str(e)
+            or "authentication" in str(e).lower()
+            or "dummy" in active_api_key
+        ):
             err_msg = "Please enter a valid Google Gemini API Key in the settings input above to activate AI insights."
         else:
             err_msg = str(e)
