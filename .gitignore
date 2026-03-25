@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+env/
+venv/
+.env
+
+# Node
+node_modules/
+.next/
+out/
+build/
+.DS_Store
+
+# Data Logs (Preventing leakage of large datasets)
+*.csv
+*.bin
+!EngineFaultDB_Final.csv
+!csv logs/*.csv
+
+# Agent/AI Artifacts
+.agent/
+.agents/
+.gemini/
+task.md
+implementation_plan.md
+walkthrough.md
+fault_analysis.md
+tuning_insights.md
