@@ -217,7 +217,7 @@ export default function Home() {
                         {resultData.rows.toLocaleString()}
                       </strong>
                     </div>
-                    
+
                     <div style={{ background: "rgba(0,0,0,0.3)", padding: "15px", borderRadius: "8px" }}>
                       <p style={{ margin: 0, fontSize: "0.85rem", color: "#94a3b8" }}>EXTRACTED TARGETS</p>
                       <strong style={{ fontSize: "1rem", color: "#f8fafc", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "block" }}>
@@ -227,23 +227,23 @@ export default function Home() {
                       </strong>
                     </div>
 
-                    <div style={{ 
-                      background: resultData.diagnostics?.status === "Critical" ? "rgba(239, 68, 68, 0.15)" : 
-                                 resultData.diagnostics?.status === "Warning" ? "rgba(245, 158, 11, 0.15)" : 
-                                 "rgba(16, 185, 129, 0.15)",
-                      padding: "15px", 
+                    <div style={{
+                      background: resultData.diagnostics?.status === "Critical" ? "rgba(239, 68, 68, 0.15)" :
+                        resultData.diagnostics?.status === "Warning" ? "rgba(245, 158, 11, 0.15)" :
+                          "rgba(16, 185, 129, 0.15)",
+                      padding: "15px",
                       borderRadius: "8px",
                       border: "1px solid " + (
-                        resultData.diagnostics?.status === "Critical" ? "rgba(239, 68, 68, 0.3)" : 
-                        resultData.diagnostics?.status === "Warning" ? "rgba(245, 158, 11, 0.3)" : 
-                        "rgba(16, 185, 129, 0.3)"
+                        resultData.diagnostics?.status === "Critical" ? "rgba(239, 68, 68, 0.3)" :
+                          resultData.diagnostics?.status === "Warning" ? "rgba(245, 158, 11, 0.3)" :
+                            "rgba(16, 185, 129, 0.3)"
                       )
                     }}>
                       <p style={{ margin: 0, fontSize: "0.85rem", color: "#94a3b8" }}>SYSTEM HEALTH</p>
-                      <strong style={{ 
-                        fontSize: "1.2rem", 
-                        color: resultData.diagnostics?.status === "Critical" ? "#f87171" : 
-                               resultData.diagnostics?.status === "Warning" ? "#fbbf24" : "#34d399"
+                      <strong style={{
+                        fontSize: "1.2rem",
+                        color: resultData.diagnostics?.status === "Critical" ? "#f87171" :
+                          resultData.diagnostics?.status === "Warning" ? "#fbbf24" : "#34d399"
                       }}>
                         {resultData.diagnostics?.health_score}% {resultData.diagnostics?.status}
                       </strong>
@@ -252,10 +252,10 @@ export default function Home() {
 
                   {/* Diagnostic Alerts */}
                   {resultData.diagnostics?.alerts?.length > 0 && (
-                    <div style={{ 
-                      background: "rgba(255,255,255,0.03)", 
-                      padding: "15px", 
-                      borderRadius: "12px", 
+                    <div style={{
+                      background: "rgba(255,255,255,0.03)",
+                      padding: "15px",
+                      borderRadius: "12px",
                       marginBottom: "25px",
                       borderLeft: "4px solid #f87171"
                     }}>

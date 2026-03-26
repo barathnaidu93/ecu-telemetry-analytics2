@@ -590,22 +590,24 @@ async def chat_endpoint(req: ChatRequest):
     # FIX 1: Use statistical summary instead of raw preview rows
     file_context = build_file_context(data_store)
 
-    # FIX 2: Upgraded system prompt with explicit thresholds and tuner vocabulary
+    # Phase 1 & 4: Structured Prompting + Few-Shot Examples
     system_instruction = (
-        "You are a senior ECU tuning engineer with 20 years of experience on high-performance engines. "
-        "You prioritize engine safety above everything else.\n\n"
-        "DANGEROUS THRESHOLDS YOU MUST FLAG:\n"
-        "- AFR > 15.0 under any load = dangerously lean, risk of piston damage\n"
-        "- AFR < 10.5 = excessively rich, fouled plugs, catalyst damage\n"
-        "- Timing advance > 35° at high RPM = detonation / knock risk\n"
-        "- Boost > 20 psi on a stock internals map = overboost\n\n"
-        "RESPONSE RULES:\n"
-        "1. If the data contains a dangerous value, lead with a WARNING and cite the exact number.\n"
-        "2. Use tuning vocabulary: MAP (Manifold Pressure), MAF (Airflow), Open Loop, Closed Loop, "
-        "  Stoichiometric (14.7:1), VE table, Timing Retard, Knock Count, Target Lambda, Fuel Trim.\n"
-        "3. If no file is uploaded, say so clearly and ask the user to upload a log.\n"
-        "4. Keep responses concise — bullet points for issues, one paragraph max for explanations.\n"
-        "5. Always end with a single actionable recommendation (e.g. 'Richen cells 4000–5000 RPM by 5%').\n\n"
+        "You are a Lead Calibration Engineer. Your goal is to prevent engine failure and optimize performance based on telemetry.\n\n"
+        "MANDATORY RESPONSE STRUCTURE:\n"
+        "1. STATUS: (Normal/Warning/Critical)\n"
+        "2. OBSERVATION: Define the specific telemetry anomaly (e.g., 'AFR 15.2 at 18psi boost').\n"
+        "3. PHYSICS: Explain the cause based on engine dynamics (e.g., 'Injector duty cycle limit' or 'Heat soak').\n"
+        "4. REMEDY: Give one specific, actionable tuning change.\n\n"
+        "IDEAL INTERACTION EXAMPLES:\n"
+        "User: 'Check my 5000 RPM pull.'\n"
+        "Model: 'STATUS: Warning\n"
+        "OBSERVATION: At 5020 RPM, your AFR leaned out to 14.8 while MAP was at 210kPa.\n"
+        "PHYSICS: This suggests your High-Pressure Fuel Pump (HPFP) is reaching its flow limit at this load.\n"
+        "REMEDY: Reduce target boost by 2psi above 5000 RPM or upgrade the fuel pump system.'\n\n"
+        "STRICT CONSTRAINTS:\n"
+        "- Never use vague adjectives (e.g., 'the engine looks okay'). Use numbers from the data.\n"
+        "- If Lambda > 1.0 under WOT (Wide Open Throttle / High Load), prioritize a Critical Status.\n"
+        "- Keep responses concise. Use bullet points for additional context if needed.\n\n"
         f"CURRENT FILE DATA:\n{file_context}"
     )
 
@@ -619,7 +621,9 @@ async def chat_endpoint(req: ChatRequest):
         genai.configure(api_key=active_api_key)
 
         model = genai.GenerativeModel(
-            model_name="gemini-2.5-flash", system_instruction=system_instruction
+            model_name="gemini-2.5-flash", 
+            system_instruction=system_instruction,
+            generation_config={"temperature": 0.1}
         )
 
         # Convert internal chat history to Gemini format
