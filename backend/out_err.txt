@@ -1,0 +1,27 @@
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "C:\Users\Dell\projects\project-root\backend\core\ingestion.py", line 47, in process_ecu_file
+    metadata = build_metadata(df, units, warnings)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Dell\projects\project-root\backend\models\metadata.py", line 28, in build_metadata
+    if time_col and not df[time_col].isnull().all():
+  File "C:\Users\Dell\projects\project-root\backend\venv\Lib\site-packages\pandas\core\generic.py", line 1513, in __bool__
+    raise ValueError(
+ValueError: The truth value of a Series is ambiguous. Use a.empty, a.bool(), a.item(), a.any() or a.all().
+
+[ENGINE] Starting modular ingestion pipeline for: 2017-07-06_Seat_Leon_KA_RT_Normal.csv
+[INFO] Initializing ingestion for: 2017-07-06_Seat_Leon_KA_RT_Normal.csv
+[INFO] Decoded using utf-8
+[INFO] Scanning first 100 lines for header density (two-pass)...
+[INFO] Detected header at line 1 using separator ','
+[INFO] Cleaning headers and extracting units...
+[INFO] Normalizing whitespace and coercing numeric types...
+[ENGINE] Initializing hardened time-series synchronization...
+[INFO] Synchronizing to primary time axis: 'time'
+[WARN] All time data was invalid. Falling back to synthetic.
+[WARN] Generating synthetic 20.0Hz clock axis.
+[INFO] Mapping telemetry aliases to standard symbols...
+[INFO] Mapped 5 columns: ['RPM', 'MAP', 'TPS', 'SPEED', 'TIME']
+[INFO] Running sanity check validation...
+[INFO] Building unified metadata schema...
+[CRITICAL ERROR] Pipeline failed: The truth value of a Series is ambiguous. Use a.empty, a.bool(), a.item(), a.any() or a.all().

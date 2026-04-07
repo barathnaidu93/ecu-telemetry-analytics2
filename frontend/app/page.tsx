@@ -6,34 +6,66 @@ import {
 } from "recharts";
 
 export default function Home() {
-  const [file, setFile] = useState(null);
+  const [file, setFile] = useState<File | null>(null);
   const [fileName, setFileName] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [fuelType, setFuelType] = useState("gasoline");
+  const [aspiration, setAspiration] = useState("NA");
   const [resultData, setResultData] = useState<any>(null);
   const [selectedCharts, setSelectedCharts] = useState<string[]>(["master"]);
   const [pinA, setPinA] = useState<number | null>(null);
   const [pinB, setPinB] = useState<number | null>(null);
-  const [wotMapOnly, setWotMapOnly] = useState(false);
+
 
   const [chatInput, setChatInput] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [messages, setMessages] = useState<any[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
-  const chatEndRef = useRef(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   // --- NEW: Global Aggregator State ---
   const [activeTab, setActiveTab] = useState<"diagnostic" | "global">("diagnostic");
-  const [globalFile, setGlobalFile] = useState(null);
-  const [globalFileName, setGlobalFileName] = useState("");
-  const [globalResultData, setGlobalResultData] = useState<any>(null);
-  const [globalLoading, setGlobalLoading] = useState(false);
-  const [globalError, setGlobalError] = useState("");
+  const [globalHeatmapSignal, setGlobalHeatmapSignal] = useState<'afr' | 'ignition' | 'boost'>('afr');
+  const [showHeatmapCount, setShowHeatmapCount] = useState(false);
+  const [activeScenario, setActiveScenario] = useState<string | null>(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, chatLoading]);
+
+  // ── Scenario Filter ── computed from chart_master._scenario embedded by backend
+  const { filteredMaster, filteredFueling, filteredIgnition, filteredTrims } = (() => {
+    const data = resultData;
+    if (!data || !activeScenario) {
+      return {
+        filteredMaster:  data?.chart_master  ?? [],
+        filteredFueling: data?.chart_fueling  ?? [],
+        filteredIgnition:data?.chart_ignition ?? [],
+        filteredTrims:   data?.chart_fuel_trims ?? [],
+      };
+    }
+    // The master array has _scenario; use its indices to filter parallel arrays
+    const masterFull: any[] = data.chart_master ?? [];
+    const fuelFull:   any[] = data.chart_fueling ?? [];
+    const ignFull:    any[] = data.chart_ignition ?? [];
+    const trimFull:   any[] = data.chart_fuel_trims ?? [];
+
+    const filteredMaster = masterFull.filter((p: any) => p._scenario === activeScenario);
+
+    // Parallel arrays are the same length when the same step is used, so filter by index
+    const masterIndices = new Set(masterFull.map((p: any, i: number) => p._scenario === activeScenario ? i : -1).filter(i => i >= 0));
+    const filterByIndex = (arr: any[]) => arr.filter((_: any, i: number) => masterIndices.has(i));
+
+    return {
+      filteredMaster,
+      filteredFueling:  fuelFull.length === masterFull.length ? filterByIndex(fuelFull) : fuelFull,
+      filteredIgnition: ignFull.length  === masterFull.length ? filterByIndex(ignFull)  : ignFull,
+      filteredTrims:    trimFull.length === masterFull.length ? filterByIndex(trimFull) : trimFull,
+    };
+  })();
 
   const handleChartClick = (state: any) => {
     if (state && state.activeLabel !== undefined) {
@@ -65,7 +97,7 @@ export default function Home() {
     }
   };
 
-  const handleFileChange = (e) => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (f) {
       setFile(f);
@@ -82,14 +114,20 @@ export default function Home() {
     setStatus("");
     setError("");
     setResultData(null);
+    setSessionId(null);
 
     const formData = new FormData();
     formData.append("file", file);
+    formData.append("fuel_type", fuelType);
+    formData.append("aspiration", aspiration);
 
     try {
-      const res = await axios.post("http://localhost:8000/upload", formData);
+      const res = await axios.post("http://localhost:8889/upload", formData);
       setStatus(`Successfully parsed: ${res.data.filename}`);
       setResultData(res.data);
+      if (res.data.session_id) {
+        setSessionId(res.data.session_id);
+      }
       setMessages([{
         role: "assistant",
         content: `New file loaded: ${res.data.filename}. Chat context has been reset. Ask me anything about this log.`
@@ -105,38 +143,6 @@ export default function Home() {
     }
   };
 
-  const handleGlobalFileChange = (e) => {
-    const f = e.target.files?.[0];
-    if (f) {
-      setGlobalFile(f);
-      setGlobalFileName(f.name);
-      setGlobalError("");
-      setGlobalResultData(null);
-    }
-  };
-
-  const handleGlobalUpload = async () => {
-    if (!globalFile) return;
-    setGlobalLoading(true);
-    setGlobalError("");
-    setGlobalResultData(null);
-
-    const formData = new FormData();
-    formData.append("file", globalFile);
-
-    try {
-      const res = await axios.post("http://localhost:8000/upload", formData);
-      setGlobalResultData(res.data);
-    } catch (err) {
-      if (axios.isAxiosError(err)) {
-        setGlobalError(err.response?.data?.detail || "Global upload failed.");
-      } else {
-        setGlobalError("An unexpected error occurred.");
-      }
-    } finally {
-      setGlobalLoading(false);
-    }
-  };
 
   const handleSendMessage = async () => {
     if (!chatInput.trim()) return;
@@ -146,9 +152,10 @@ export default function Home() {
     setChatLoading(true);
 
     try {
-      const res = await axios.post("http://localhost:8000/chat", {
+      const res = await axios.post("http://localhost:8889/chat", {
         message: userMsg,
         api_key: apiKey,
+        session_id: sessionId,
       });
       setMessages((prev) => [...prev, { role: "assistant", content: res.data.reply }]);
     } catch {
@@ -165,28 +172,35 @@ export default function Home() {
     color: "#e2e8f0",
   };
 
-  // The custom colors for our specific lines
-  const COLOR_TPS = "#f59e0b"; // Orange
-  const COLOR_MAP = "#34d399"; // Green 
-  const COLOR_MAF = "#8b5cf6"; // Purple
-  const COLOR_AFR = "#00C6FF"; // Blue
-  const COLOR_IGN = "#3b82f6"; // Blue 500
-  const COLOR_KNK = "#f43f5e"; // Rose 500
-  const COLOR_STFT = "#10b981"; // Emerald 500
-  const COLOR_LTFT = "#8b5cf6"; // Violet 500
+  // Semantic color palette — each constant maps to its telemetry signal
+  const COLOR_TPS  = "#f59e0b"; // Amber   — Throttle Position
+  const COLOR_MAP  = "#34d399"; // Emerald — Manifold Pressure
+  const COLOR_MAF  = "#8b5cf6"; // Violet  — Mass Airflow
+  const COLOR_RPM  = "#00C6FF"; // Cyan    — Engine RPM (was COLOR_AFR, now correctly named)
+  const COLOR_AFR  = "#fbbf24"; // Gold    — Air-Fuel Ratio (matches fueling chart line)
+  const COLOR_IGN  = "#3b82f6"; // Blue    — Ignition Timing
+  const COLOR_KNK  = "#f43f5e"; // Rose    — Knock Retard
+  const COLOR_STFT = "#10b981"; // Emerald — Short Term Fuel Trim
+  const COLOR_LTFT = "#a78bfa"; // Purple  — Long Term Fuel Trim (was violet duplicate of COLOR_MAF)
 
-  // ── Master Plot: detect which variables are present in the data ──
-  const masterHasRPM = resultData?.chart_master?.some((p) => p.RPM !== undefined && p.RPM !== null);
-  const masterHasThrottle = resultData?.chart_master?.some((p) => p.Throttle !== undefined && p.Throttle !== null);
-  const masterHasSpeed = resultData?.chart_master?.some((p) => p.Speed !== undefined && p.Speed !== null);
+  const masterHasRPM      = resultData?.chart_master?.some((p: Record<string, unknown>) => p.RPM      !== undefined && p.RPM      !== null);
+  const masterHasThrottle = resultData?.chart_master?.some((p: Record<string, unknown>) => p.Throttle !== undefined && p.Throttle !== null);
+  const masterHasSpeed    = resultData?.chart_master?.some((p: Record<string, unknown>) => p.Speed    !== undefined && p.Speed    !== null);
   // Right axis is needed only when Throttle or Speed are present
   const masterNeedsRightAxis = masterHasThrottle || masterHasSpeed;
 
   // ── Ignition Plot Detection ──
-  const ignHasTiming = resultData?.chart_ignition?.some((p) => p.Timing !== undefined);
-  const ignHasKnock = resultData?.chart_ignition?.some((p) => p.Knock !== undefined);
-  const trimHasSTFT = resultData?.chart_fuel_trims?.some((p) => p.STFT !== undefined);
-  const trimHasLTFT = resultData?.chart_fuel_trims?.some((p) => p.LTFT !== undefined);
+  const ignHasTiming  = resultData?.chart_ignition?.some((p: Record<string, unknown>)   => p.Timing !== undefined);
+  const ignHasKnock   = resultData?.chart_ignition?.some((p: Record<string, unknown>)   => p.Knock  !== undefined);
+  const trimHasSTFT   = resultData?.chart_fuel_trims?.some((p: Record<string, unknown>) => p.STFT   !== undefined);
+  const trimHasLTFT   = resultData?.chart_fuel_trims?.some((p: Record<string, unknown>) => p.LTFT   !== undefined);
+  const fuelHasAFR    = resultData?.chart_fueling?.some((p: Record<string, unknown>)    => p.AFR    !== undefined);
+  const fuelHasLambda = resultData?.chart_fueling?.some((p: Record<string, unknown>)    => p.Lambda !== undefined);
+
+  // MAF chart — detect first non-name key to show
+  const mafFirstKey = resultData?.chart_rpm?.length > 0
+    ? Object.keys(resultData.chart_rpm[0]).find((k) => k !== "name")
+    : undefined;
 
   // --- REUSABLE HEATMAP HELPERS ---
   const getCellColor = (afr: number) => {
@@ -201,6 +215,22 @@ export default function Home() {
     if (count >= 15) return 1.0;
     if (count >= 5) return 0.7;
     return 0.3;
+  };
+
+  const getIgnitionColor = (deg: number) => {
+    if (deg < 10)  return "#1e3a8a";
+    if (deg < 20)  return "#3b82f6";
+    if (deg < 30)  return "#10b981";
+    if (deg < 38)  return "#f59e0b";
+    return "#ef4444";
+  };
+
+  const getBoostColor = (kpa: number) => {
+    if (kpa < 100) return "#1e3a8a";
+    if (kpa < 130) return "#3b82f6";
+    if (kpa < 160) return "#10b981";
+    if (kpa < 200) return "#f59e0b";
+    return "#ef4444";
   };
 
   return (
@@ -276,63 +306,109 @@ export default function Home() {
           </div>
         </div>
 
+        {/* ── SHARED UPLOADER (Unified Data Source) ── */}
+        <div style={{
+          background: "rgba(30, 41, 59, 0.4)",
+          backdropFilter: "blur(12px)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          borderRadius: "16px",
+          padding: "30px",
+          boxShadow: "0 20px 40px rgba(0,0,0,0.4)",
+          marginBottom: "30px"
+        }}>
+          <h2 style={{ marginTop: 0, fontSize: "1.5rem", color: "#f8fafc" }}>Telemetry Ingestion Pipeline</h2>
+
+          <div style={{ display: "flex", gap: "10px", marginTop: "15px" }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ display: "block", fontSize: "0.85rem", color: "#64748b", marginBottom: "5px", fontWeight: 600 }}>FUEL TYPE</label>
+              <select
+                value={fuelType}
+                onChange={(e) => setFuelType(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "10px",
+                  background: "rgba(15,23,42,0.8)",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  borderRadius: "6px",
+                  color: "#e2e8f0",
+                  fontSize: "0.9rem",
+                }}
+              >
+                <option value="gasoline">Gasoline (Pump)</option>
+                <option value="e85">E85 (Ethanol)</option>
+                <option value="racegas">Race Gas</option>
+              </select>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={{ display: "block", fontSize: "0.85rem", color: "#64748b", marginBottom: "5px", fontWeight: 600 }}>ASPIRATION</label>
+              <select
+                value={aspiration}
+                onChange={(e) => setAspiration(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "10px",
+                  background: "rgba(15,23,42,0.8)",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  borderRadius: "6px",
+                  color: "#e2e8f0",
+                  fontSize: "0.9rem",
+                }}
+              >
+                <option value="NA">Naturally Aspirated (NA)</option>
+                <option value="Turbo">Turbocharged</option>
+                <option value="Supercharged">Supercharged</option>
+              </select>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: "15px", alignItems: "center", marginTop: "20px" }}>
+            <label style={{
+              padding: "12px 24px",
+              background: "rgba(255,255,255,0.05)",
+              border: "1px dashed rgba(255,255,255,0.2)",
+              borderRadius: "8px",
+              cursor: "pointer",
+              flex: "1",
+            }}>
+              <span style={{ color: "#94a3b8" }}>
+                {fileName ? fileName : "Select .csv or .bin log file..."}
+              </span>
+              <input type="file" accept=".csv,.bin" onChange={handleFileChange} style={{ display: "none" }} />
+            </label>
+
+            <button
+              onClick={handleUpload}
+              disabled={!file || loading}
+              style={{
+                padding: "12px 32px",
+                background: !file || loading
+                  ? "rgba(255,255,255,0.1)"
+                  : "linear-gradient(90deg, #00C6FF 0%, #0072FF 100%)",
+                color: !file || loading ? "#64748b" : "white",
+                border: "none",
+                borderRadius: "8px",
+                fontSize: "1rem",
+                fontWeight: "600",
+                cursor: !file || loading ? "not-allowed" : "pointer",
+                boxShadow: !file || loading ? "none" : "0 8px 16px rgba(0,114,255,0.25)",
+              }}
+            >
+              {loading ? "Processing..." : "Engage"}
+            </button>
+          </div>
+
+          {status && (
+            <p style={{ color: "#34d399", marginTop: "15px", fontWeight: "500" }}>✓ {status}</p>
+          )}
+          {error && (
+            <p style={{ color: "#f87171", marginTop: "15px", fontWeight: "500" }}>⚠ {error}</p>
+          )}
+        </div>
+
         {activeTab === "diagnostic" ? (
           <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "30px" }}>
 
             {/* ── Uploader ── */}
-            <div style={{
-              background: "rgba(30, 41, 59, 0.4)",
-              backdropFilter: "blur(12px)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              borderRadius: "16px",
-              padding: "30px",
-              boxShadow: "0 20px 40px rgba(0,0,0,0.4)",
-            }}>
-              <h2 style={{ marginTop: 0, fontSize: "1.5Data Pipelinerem", color: "#f8fafc" }}></h2>
-
-              <div style={{ display: "flex", gap: "15px", alignItems: "center", marginTop: "20px" }}>
-                <label style={{
-                  padding: "12px 24px",
-                  background: "rgba(255,255,255,0.05)",
-                  border: "1px dashed rgba(255,255,255,0.2)",
-                  borderRadius: "8px",
-                  cursor: "pointer",
-                  flex: "1",
-                }}>
-                  <span style={{ color: "#94a3b8" }}>
-                    {fileName ? fileName : "Select .csv or .bin log file..."}
-                  </span>
-                  <input type="file" accept=".csv,.bin" onChange={handleFileChange} style={{ display: "none" }} />
-                </label>
-
-                <button
-                  onClick={handleUpload}
-                  disabled={!file || loading}
-                  style={{
-                    padding: "12px 32px",
-                    background: !file || loading
-                      ? "rgba(255,255,255,0.1)"
-                      : "linear-gradient(90deg, #00C6FF 0%, #0072FF 100%)",
-                    color: !file || loading ? "#64748b" : "white",
-                    border: "none",
-                    borderRadius: "8px",
-                    fontSize: "1rem",
-                    fontWeight: "600",
-                    cursor: !file || loading ? "not-allowed" : "pointer",
-                    boxShadow: !file || loading ? "none" : "0 8px 16px rgba(0,114,255,0.25)",
-                  }}
-                >
-                  {loading ? "Processing..." : "Engage"}
-                </button>
-              </div>
-
-              {status && (
-                <p style={{ color: "#34d399", marginTop: "15px", fontWeight: "500" }}>✓ {status}</p>
-              )}
-              {error && (
-                <p style={{ color: "#f87171", marginTop: "15px", fontWeight: "500" }}>⚠ {error}</p>
-              )}
-            </div>
 
             {/* ── Data Preview ── */}
             {resultData && (
@@ -402,53 +478,152 @@ export default function Home() {
                       }}>
                         <p style={{ margin: "0 0 10px 0", fontSize: "0.9rem", color: "#f87171", fontWeight: "700" }}>⚠️ ACTIVE DIAGNOSTIC ALERTS</p>
                         <ul style={{ margin: 0, paddingLeft: "18px", color: "#cbd5e1", fontSize: "0.85rem" }}>
-                          {resultData.diagnostics.alerts.map((alert, idx) => (
+                          {resultData.diagnostics.alerts.map((alert: string, idx: number) => (
                             <li key={idx} style={{ marginBottom: "4px" }}>{alert}</li>
                           ))}
                         </ul>
                       </div>
                     )}
 
-                    {/* Column stats table */}
-                    {resultData.column_stats && Object.keys(resultData.column_stats).length > 0 && (
-                      <div style={{ marginBottom: "25px" }}>
-                        <p style={{ color: "#94a3b8", fontSize: "0.8rem", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                          Numeric column ranges (full dataset)
-                        </p>
-                        <div style={{ overflowX: "auto", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)" }}>
-                          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.85rem", textAlign: "left" }}>
-                            <thead style={{ backgroundColor: "rgba(0,0,0,0.4)" }}>
-                              <tr>
-                                {["Column", "Min", "Max", "Avg", "Count"].map((h) => (
-                                  <th key={h} style={{ padding: "10px 14px", color: "#94a3b8", fontWeight: "600", whiteSpace: "nowrap" }}>{h}</th>
-                                ))}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {Object.entries(resultData.column_stats).map(([col, stats], i) => {
-                                const clow = col.toLowerCase();
-                                const isLean = (clow.includes("afr") || clow.includes("lambda")) && stats.max > 15.0;
-                                return (
-                                  <tr key={col} style={{
-                                    borderTop: "1px solid rgba(255,255,255,0.04)",
-                                    backgroundColor: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.02)",
-                                  }}>
-                                    <td style={{ padding: "9px 14px", color: "#00C6FF", whiteSpace: "nowrap" }}>{col}</td>
-                                    <td style={{ padding: "9px 14px", color: "#cbd5e1" }}>{stats.min}</td>
-                                    <td style={{ padding: "9px 14px", color: isLean ? "#f87171" : "#cbd5e1" }}>
-                                      {stats.max}
-                                      {isLean && (
-                                        <span style={{ marginLeft: "6px", fontSize: "0.75rem", color: "#f87171" }}>⚠ LEAN</span>
-                                      )}
-                                    </td>
-                                    <td style={{ padding: "9px 14px", color: "#cbd5e1" }}>{stats.avg}</td>
-                                    <td style={{ padding: "9px 14px", color: "#64748b" }}>{stats.count}</td>
+                        {resultData.column_stats && Object.keys(resultData.column_stats).length > 0 && (
+                          <div style={{ marginBottom: "25px" }}>
+                            <p style={{ color: "#94a3b8", fontSize: "0.8rem", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                              Numeric column ranges (full dataset)
+                            </p>
+                            <div style={{ overflowX: "auto", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)" }}>
+                              <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.85rem", textAlign: "left" }}>
+                                <thead style={{ backgroundColor: "rgba(0,0,0,0.4)" }}>
+                                  <tr>
+                                    {["Column", "Min", "Max", "Avg", "Count"].map((h) => (
+                                      <th key={h} style={{ padding: "10px 14px", color: "#94a3b8", fontWeight: "600", whiteSpace: "nowrap" }}>{h}</th>
+                                    ))}
                                   </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
+                                </thead>
+                                <tbody>
+                                  {(Object.entries(resultData.column_stats) as [string, { min: number; max: number; avg: number; count: number }][]).map(([col, stats], i) => {
+                                    const clow = col.toLowerCase();
+                                    const isLean = (clow.includes("afr") || clow.includes("lambda")) && stats.max > 15.0;
+                                    return (
+                                      <tr key={col} style={{
+                                        borderTop: "1px solid rgba(255,255,255,0.04)",
+                                        backgroundColor: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.02)",
+                                      }}>
+                                        <td style={{ padding: "9px 14px", color: "#00C6FF", whiteSpace: "nowrap" }}>{col}</td>
+                                        <td style={{ padding: "9px 14px", color: "#cbd5e1" }}>{stats.min}</td>
+                                        <td style={{ padding: "9px 14px", color: isLean ? "#f87171" : "#cbd5e1" }}>
+                                          {stats.max}
+                                          {isLean && (
+                                            <span style={{ marginLeft: "6px", fontSize: "0.75rem", color: "#f87171" }}>LEAN</span>
+                                          )}
+                                        </td>
+                                        <td style={{ padding: "9px 14px", color: "#cbd5e1" }}>{stats.avg}</td>
+                                        <td style={{ padding: "9px 14px", color: "#64748b" }}>{stats.count}</td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+
+                    {/* ── Scenario Tagging Panel ── */}
+                    {resultData.scenario_summary && Object.keys(resultData.scenario_summary).length > 0 && (
+                      <div style={{ marginBottom: "25px" }}>
+                        <p style={{ color: "#94a3b8", fontSize: "0.8rem", marginBottom: "12px", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                          🏷 Auto-Detected Driving Scenarios
+                        </p>
+
+                        {/* Summary stat cards for active scenario */}
+                        {activeScenario && resultData.scenario_summary[activeScenario] && (() => {
+                          const s = resultData.scenario_summary[activeScenario];
+                          return (
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "10px", marginBottom: "14px" }}>
+                              {s.avg_rpm != null && (
+                                <div style={{ background: "rgba(0,198,255,0.08)", border: "1px solid rgba(0,198,255,0.2)", borderRadius: "8px", padding: "10px 14px" }}>
+                                  <p style={{ margin: 0, fontSize: "0.7rem", color: "#64748b", textTransform: "uppercase" }}>Avg RPM</p>
+                                  <strong style={{ color: "#00C6FF", fontSize: "1.1rem" }}>{s.avg_rpm.toLocaleString()}</strong>
+                                </div>
+                              )}
+                              {s.avg_afr != null && (
+                                <div style={{ background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.2)", borderRadius: "8px", padding: "10px 14px" }}>
+                                  <p style={{ margin: 0, fontSize: "0.7rem", color: "#64748b", textTransform: "uppercase" }}>Avg AFR</p>
+                                  <strong style={{ color: "#fbbf24", fontSize: "1.1rem" }}>{s.avg_afr}</strong>
+                                </div>
+                              )}
+                              {s.avg_map != null && (
+                                <div style={{ background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.2)", borderRadius: "8px", padding: "10px 14px" }}>
+                                  <p style={{ margin: 0, fontSize: "0.7rem", color: "#64748b", textTransform: "uppercase" }}>Avg MAP</p>
+                                  <strong style={{ color: "#34d399", fontSize: "1.1rem" }}>{s.avg_map} kPa</strong>
+                                </div>
+                              )}
+                              <div style={{ background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.2)", borderRadius: "8px", padding: "10px 14px" }}>
+                                <p style={{ margin: 0, fontSize: "0.7rem", color: "#64748b", textTransform: "uppercase" }}>Log Share</p>
+                                <strong style={{ color: "#a78bfa", fontSize: "1.1rem" }}>{s.pct}%</strong>
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* Scenario filter pills */}
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                          <button
+                            onClick={() => setActiveScenario(null)}
+                            style={{
+                              padding: "6px 14px",
+                              borderRadius: "999px",
+                              border: `1px solid ${activeScenario === null ? "#00C6FF" : "rgba(255,255,255,0.12)"}`,
+                              background: activeScenario === null ? "rgba(0,198,255,0.15)" : "rgba(255,255,255,0.04)",
+                              color: activeScenario === null ? "#00C6FF" : "#94a3b8",
+                              cursor: "pointer",
+                              fontSize: "0.8rem",
+                              fontWeight: activeScenario === null ? "700" : "400",
+                              transition: "all 0.18s",
+                            }}
+                          >
+                            All Data
+                          </button>
+                          {(Object.entries(resultData.scenario_summary) as [string, any][]).map(([tag, stats]) => {
+                            const SCENARIO_COLORS: Record<string, string> = {
+                              "WOT Pull":          "#ef4444",
+                              "Hard Acceleration":  "#f97316",
+                              "Highway Cruise":     "#3b82f6",
+                              "City Driving":       "#10b981",
+                              "Idle / Decel":       "#64748b",
+                              "Cold Start":         "#a78bfa",
+                            };
+                            const color = SCENARIO_COLORS[tag] ?? "#94a3b8";
+                            const isActive = activeScenario === tag;
+                            return (
+                              <button
+                                key={tag}
+                                onClick={() => setActiveScenario(isActive ? null : tag)}
+                                style={{
+                                  padding: "6px 14px",
+                                  borderRadius: "999px",
+                                  border: `1px solid ${isActive ? color : "rgba(255,255,255,0.12)"}`,
+                                  background: isActive ? `${color}22` : "rgba(255,255,255,0.04)",
+                                  color: isActive ? color : "#94a3b8",
+                                  cursor: "pointer",
+                                  fontSize: "0.8rem",
+                                  fontWeight: isActive ? "700" : "400",
+                                  transition: "all 0.18s",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "6px",
+                                }}
+                              >
+                                {tag}
+                                <span style={{ opacity: 0.65, fontSize: "0.72rem" }}>{stats.pct}%</span>
+                              </button>
+                            );
+                          })}
                         </div>
+                        {activeScenario && (
+                          <p style={{ color: "#64748b", fontSize: "0.75rem", marginTop: "8px", marginBottom: 0 }}>
+                            Showing <strong style={{ color: "#94a3b8" }}>{filteredMaster.length}</strong> of {resultData.chart_master?.length ?? 0} data points
+                          </p>
+                        )}
                       </div>
                     )}
 
@@ -644,7 +819,7 @@ export default function Home() {
 
                                   return (
                                     <div>
-                                      {masterHasRPM && renderMetric("RPM", "RPM", COLOR_AFR)}
+                                      {masterHasRPM && renderMetric("RPM", "RPM", COLOR_RPM)}
                                       {masterHasThrottle && renderMetric("Throttle", "Throttle", COLOR_TPS, "%")}
                                       {masterHasSpeed && renderMetric("Speed", "Speed", COLOR_MAF, "km/h")}
                                     </div>
@@ -653,7 +828,7 @@ export default function Home() {
                               </div>
                             )}
                             <ResponsiveContainer width="100%" height="100%">
-                              <LineChart data={resultData.chart_master} syncId="efi-analysis" onClick={handleChartClick} margin={{ top: 5, right: masterNeedsRightAxis ? 30 : 10, bottom: 20, left: 10 }}>
+                              <LineChart data={filteredMaster} syncId="efi-analysis" onClick={handleChartClick} margin={{ top: 5, right: masterNeedsRightAxis ? 30 : 10, bottom: 20, left: 10 }}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                                 <XAxis
                                   dataKey="name"
@@ -773,7 +948,15 @@ export default function Home() {
                                 <YAxis stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} domain={['auto', 'auto']} width={60} label={{ value: 'Mass Airflow (MAF)', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: 10 }} />
                                 <Tooltip contentStyle={tooltipStyle} />
                                 <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "20px" }} />
-                                <Line name="Mass Airflow (MAF)" type="monotone" dataKey="MAF" stroke="#34d399" strokeWidth={2} dot={false} activeDot={{ r: 5 }} />
+                                <Line
+                                  name={mafFirstKey ? String(mafFirstKey) : "Mass Airflow (MAF)"}
+                                  type="monotone"
+                                  dataKey={mafFirstKey || "MAF"}
+                                  stroke="#34d399"
+                                  strokeWidth={2}
+                                  dot={false}
+                                  activeDot={{ r: 5 }}
+                                />
                               </LineChart>
                             </ResponsiveContainer>
                           </div>
@@ -802,11 +985,12 @@ export default function Home() {
                       )}
 
                       {/* 4.) Fueling Safety (AFR & Lambda) */}
-                      {resultData && selectedCharts.includes('fueling') && resultData.chart_fueling && resultData.chart_fueling.length > 0 && (
+                      {resultData && selectedCharts.includes('fueling') && (
                         <div style={{ padding: "25px", background: "rgba(0,0,0,0.2)", borderRadius: "12px", border: "1px solid rgba(255,255,255,0.03)" }}>
                           <h3 style={{ color: "#00C6FF", marginTop: 0, marginBottom: "25px", fontSize: "1.2rem", fontWeight: "600" }}>
                             ⛽ Fueling Safety - AFR & Lambda vs Time
                           </h3>
+                          {resultData.chart_fueling && resultData.chart_fueling.length > 0 ? (
                           <div style={{ height: "400px", width: "100%", position: "relative" }}>
                             {(pinA !== null || pinB !== null) && resultData.chart_fueling && (
                               <div style={{
@@ -862,7 +1046,7 @@ export default function Home() {
                               </div>
                             )}
                             <ResponsiveContainer width="100%" height="100%">
-                              <LineChart data={resultData.chart_fueling} syncId="efi-analysis" onClick={handleChartClick} margin={{ top: 5, right: 30, bottom: 20, left: 10 }}>
+                              <LineChart data={filteredFueling} syncId="efi-analysis" onClick={handleChartClick} margin={{ top: 5, right: 30, bottom: 20, left: 10 }}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                                 <XAxis
                                   dataKey="Time"
@@ -885,11 +1069,37 @@ export default function Home() {
                                 <YAxis stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} domain={['auto', 'auto']} width={60} label={{ value: 'AFR / Lambda', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: 10 }} />
                                 <Tooltip contentStyle={tooltipStyle} />
                                 <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "20px" }} />
-                                <Line name="AFR (Air-Fuel Ratio)" type="monotone" dataKey="AFR" stroke="#fbbf24" strokeWidth={2} dot={false} activeDot={{ r: 5 }} />
-                                <Line name="Lambda" type="monotone" dataKey="Lambda" stroke="#34d399" strokeWidth={2} strokeDasharray="5 5" dot={false} />
+                                {fuelHasAFR && (
+                                  <Line
+                                    name="AFR (Air-Fuel Ratio)"
+                                    type="monotone"
+                                    dataKey="AFR"
+                                    stroke={COLOR_AFR}
+                                    strokeWidth={2}
+                                    dot={false}
+                                    activeDot={{ r: 5 }}
+                                  />
+                                )}
+                                {fuelHasLambda && (
+                                  <Line
+                                    name="Lambda"
+                                    type="monotone"
+                                    dataKey="Lambda"
+                                    stroke="#34d399"
+                                    strokeWidth={2}
+                                    strokeDasharray="5 5"
+                                    dot={false}
+                                  />
+                                )}
                               </LineChart>
                             </ResponsiveContainer>
                           </div>
+                          ) : (
+                            <div style={{ textAlign: "center", padding: "100px 20px", color: "#64748b" }}>
+                              <p style={{ fontSize: "1.1rem", marginBottom: "8px" }}>No AFR or Lambda sensors detected in this log.</p>
+                              <p style={{ fontSize: "0.9rem" }}>Requires AFR, Lambda, or WBO2 columns in the data.</p>
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -954,7 +1164,7 @@ export default function Home() {
                                 </div>
                               )}
                               <ResponsiveContainer width="100%" height="100%">
-                                <LineChart data={resultData.chart_ignition} syncId="efi-analysis" onClick={handleChartClick} margin={{ top: 5, right: 30, bottom: 20, left: 10 }}>
+                                <LineChart data={filteredIgnition} syncId="efi-analysis" onClick={handleChartClick} margin={{ top: 5, right: 30, bottom: 20, left: 10 }}>
                                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                                   <XAxis
                                     dataKey="Time"
@@ -1052,7 +1262,7 @@ export default function Home() {
                                 </div>
                               )}
                               <ResponsiveContainer width="100%" height="100%">
-                                <LineChart data={resultData.chart_fuel_trims} syncId="efi-analysis" onClick={handleChartClick} margin={{ top: 5, right: 30, bottom: 20, left: 10 }}>
+                                <LineChart data={filteredTrims} syncId="efi-analysis" onClick={handleChartClick} margin={{ top: 5, right: 30, bottom: 20, left: 10 }}>
                                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                                   <XAxis
                                     dataKey="Time"
@@ -1101,6 +1311,8 @@ export default function Home() {
                           <p style={{ fontSize: "1.1rem" }}>Select a visualization from the icons above to begin multi-chart analysis</p>
                         </div>
                       )}
+
+
                     </div>
                   </div>
                 )}
@@ -1276,65 +1488,8 @@ export default function Home() {
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "30px" }}>
-            {/* ── Global Aggregator Uploader ── */}
-            <div style={{
-              background: "rgba(30, 41, 59, 0.4)",
-              backdropFilter: "blur(12px)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              borderRadius: "16px",
-              padding: "30px",
-              boxShadow: "0 20px 40px rgba(0,0,0,0.4)",
-            }}>
-              <h2 style={{ marginTop: 0, fontSize: "1.5rem", color: "#f8fafc" }}>Master Aggregator Pipeline</h2>
-              <p style={{ color: "#94a3b8", fontSize: "0.9rem", marginBottom: "20px" }}>
-                Upload a combined telemetry database (CSV) to generate a high-fidelity global fuel map.
-              </p>
-
-              <div style={{ display: "flex", gap: "15px", alignItems: "center" }}>
-                <label style={{
-                  padding: "12px 24px",
-                  background: "rgba(255,255,255,0.05)",
-                  border: "1px dashed rgba(255,255,255,0.2)",
-                  borderRadius: "8px",
-                  cursor: "pointer",
-                  flex: "1",
-                }}>
-                  <span style={{ color: "#94a3b8" }}>
-                    {globalFileName ? globalFileName : "Select master database file (.csv)..."}
-                  </span>
-                  <input type="file" accept=".csv" onChange={handleGlobalFileChange} style={{ display: "none" }} />
-                </label>
-
-                <button
-                  onClick={handleGlobalUpload}
-                  disabled={!globalFile || globalLoading}
-                  style={{
-                    padding: "12px 30px",
-                    background: !globalFile || globalLoading
-                      ? "rgba(255,255,255,0.05)"
-                      : "linear-gradient(135deg, #00C6FF 0%, #0072FF 100%)",
-                    color: !globalFile || globalLoading ? "#64748b" : "white",
-                    border: "none",
-                    borderRadius: "8px",
-                    fontWeight: "600",
-                    cursor: !globalFile || globalLoading ? "not-allowed" : "pointer",
-                    boxShadow: !globalFile || globalLoading ? "none" : "0 4px 15px rgba(0,114,255,0.3)",
-                    transition: "all 0.2s",
-                  }}
-                >
-                  {globalLoading ? "Processing DB..." : "Aggregate Data"}
-                </button>
-              </div>
-
-              {globalError && (
-                <div style={{ marginTop: "15px", padding: "12px", background: "rgba(239, 68, 68, 0.1)", border: "1px solid rgba(239, 68, 68, 0.2)", borderRadius: "8px", color: "#f87171", fontSize: "0.9rem" }}>
-                  {globalError}
-                </div>
-              )}
-            </div>
-
-            {/* --- Global Fuel Heatmap Suite --- */}
-            {globalResultData && globalResultData.afr_heatmap && (
+            {/* --- Global Calibration Heatmap Suite --- */}
+            {resultData && (
               <div style={{
                 background: "rgba(15, 23, 42, 0.4)",
                 border: "1px solid rgba(255,255,255,0.05)",
@@ -1342,33 +1497,94 @@ export default function Home() {
                 padding: "25px",
                 boxShadow: "0 10px 30px rgba(0,0,0,0.3)"
               }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                    <div style={{ width: "8px", height: "8px", background: "#00C6FF", borderRadius: "50%", boxShadow: "0 0 10px #00C6FF" }} />
-                    <h3 style={{ margin: 0, color: "#f8fafc", fontSize: "1.1rem" }}>
-                      📊 Global Calibration Heatmap <span style={{ color: "#64748b", fontSize: "0.8rem", fontWeight: "normal" }}>({globalResultData.afr_heatmap.load_type})</span>
-                    </h3>
+                {/* Header */}
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "20px" }}>
+                  <div style={{ width: "8px", height: "8px", background: "#00C6FF", borderRadius: "50%", boxShadow: "0 0 10px #00C6FF" }} />
+                  <h3 style={{ margin: 0, color: "#f8fafc", fontSize: "1.1rem" }}>
+                    📊 Global Calibration Heatmap Suite
+                  </h3>
+                </div>
+
+                {/* Signal Selector + Count Toggle */}
+                <div style={{ display: "flex", gap: "10px", marginBottom: "20px", flexWrap: "wrap", alignItems: "center" }}>
+                  <span style={{ color: "#64748b", fontSize: "0.8rem", fontWeight: "700", letterSpacing: "0.06em", textTransform: "uppercase" }}>Signal:</span>
+                  {([
+                    { id: 'afr'      as const, label: '⛽ AFR',       key: 'afr_heatmap' },
+                    { id: 'ignition' as const, label: '🔥 Ignition',  key: 'ignition_heatmap' },
+                    { id: 'boost'    as const, label: '💨 Boost/MAP', key: 'boost_heatmap' },
+                  ]).map((s) => {
+                    const available = !!(resultData[s.key]?.cells?.length);
+                    return (
+                      <button
+                        key={s.id}
+                        onClick={() => available && setGlobalHeatmapSignal(s.id)}
+                        style={{
+                          padding: "8px 16px", borderRadius: "8px",
+                          border: `1px solid ${globalHeatmapSignal === s.id ? '#00C6FF' : 'rgba(255,255,255,0.1)'}`,
+                          background: globalHeatmapSignal === s.id ? 'rgba(0,198,255,0.15)' : 'transparent',
+                          color: !available ? '#334155' : globalHeatmapSignal === s.id ? '#00C6FF' : '#94a3b8',
+                          cursor: available ? 'pointer' : 'not-allowed',
+                          fontSize: "0.85rem", fontWeight: "600", transition: "all 0.2s",
+                        }}
+                      >
+                        {s.label}{!available && <span style={{ marginLeft: "5px", fontSize: "0.7rem" }}>N/A</span>}
+                      </button>
+                    );
+                  })}
+                  <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span style={{ color: "#64748b", fontSize: "0.78rem" }}>Sample Count</span>
+                    <div
+                      onClick={() => setShowHeatmapCount(v => !v)}
+                      style={{
+                        width: "38px", height: "22px", borderRadius: "11px",
+                        background: showHeatmapCount ? "#00C6FF" : "rgba(255,255,255,0.1)",
+                        cursor: "pointer", position: "relative", transition: "background 0.2s",
+                      }}
+                    >
+                      <div style={{
+                        width: "16px", height: "16px", borderRadius: "50%", background: "white",
+                        position: "absolute", top: "3px",
+                        left: showHeatmapCount ? "19px" : "3px", transition: "left 0.2s",
+                      }} />
+                    </div>
                   </div>
                 </div>
 
-                <div style={{ overflowX: "auto", paddingBottom: "10px" }}>
-                  {(() => {
-                    const hData = globalResultData.afr_heatmap;
-                    if (!hData.cells || hData.cells.length === 0) {
-                      return <div style={{ textAlign: "center", padding: "40px", color: "#64748b" }}>Insufficient data for global aggregation.</div>;
-                    }
+                {/* Heatmap Table */}
+                {(() => {
+                  const hData = globalHeatmapSignal === 'afr'
+                    ? resultData.afr_heatmap
+                    : globalHeatmapSignal === 'ignition'
+                    ? resultData.ignition_heatmap
+                    : resultData.boost_heatmap;
 
-                    const cells = hData.cells;
-
+                  if (!hData || !hData.cells || hData.cells.length === 0) {
                     return (
+                      <div style={{ textAlign: "center", padding: "60px 20px", color: "#64748b" }}>
+                        <p style={{ fontSize: "1rem", marginBottom: "8px" }}>
+                          No <strong style={{ color: "#94a3b8" }}>{globalHeatmapSignal.toUpperCase()}</strong> data available.
+                        </p>
+                        <p style={{ fontSize: "0.85rem" }}>This signal was not detected or had insufficient coverage in this log.</p>
+                      </div>
+                    );
+                  }
+
+                  const getColor = (value: number) => {
+                    if (globalHeatmapSignal === 'afr')      return getCellColor(value);
+                    if (globalHeatmapSignal === 'ignition') return getIgnitionColor(value);
+                    return getBoostColor(value);
+                  };
+
+                  return (
+                    <div style={{ overflowX: "auto", paddingBottom: "10px" }}>
                       <table style={{ borderCollapse: "collapse", margin: "0 auto", fontSize: "0.75rem" }}>
                         <thead>
                           <tr>
-                            <th style={{ padding: "8px", color: "#64748b", border: "1px solid rgba(255,255,255,0.05)", textAlign: "center" }}>
+                            <th style={{ padding: "8px 10px", color: "#64748b", border: "1px solid rgba(255,255,255,0.05)", textAlign: "center", whiteSpace: "nowrap" }}>
                               RPM \ {hData.load_type}
                             </th>
                             {hData.load_bins.map((load: number) => (
-                              <th key={load} style={{ padding: "8px", color: "#94a3b8", fontWeight: "600", border: "1px solid rgba(255,255,255,0.05)" }}>
+                              <th key={load} style={{ padding: "6px 4px", color: "#94a3b8", fontWeight: "600", border: "1px solid rgba(255,255,255,0.05)", textAlign: "center", minWidth: "48px" }}>
                                 {load}
                               </th>
                             ))}
@@ -1377,33 +1593,34 @@ export default function Home() {
                         <tbody>
                           {hData.rpm_bins.map((rpm: number) => (
                             <tr key={rpm}>
-                              <td style={{ padding: "8px", color: "#94a3b8", fontWeight: "600", border: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
+                              <td style={{ padding: "6px 10px", color: "#94a3b8", fontWeight: "600", border: "1px solid rgba(255,255,255,0.05)", textAlign: "right", whiteSpace: "nowrap" }}>
                                 {rpm}
                               </td>
                               {hData.load_bins.map((load: number) => {
-                                const cell = cells.find((c: any) => c.rpm === rpm && c.load === load);
-                                const color = cell ? getCellColor(cell.afr) : "rgba(255,255,255,0.02)";
+                                const cell = hData.cells.find((c: any) => c.rpm === rpm && c.load === load);
+                                const color = cell ? getColor(cell.value) : "rgba(255,255,255,0.02)";
                                 const opacity = cell ? getOpacity(cell.count) : 1;
-
+                                const displayVal = cell
+                                  ? showHeatmapCount ? String(cell.count) : cell.value.toFixed(1)
+                                  : "";
                                 return (
                                   <td
                                     key={`${rpm}-${load}`}
-                                    title={cell ? `AFR: ${cell.afr}\nSamples: ${cell.count}\nRPM: ${rpm}\nLoad: ${load}` : `RPM: ${rpm}\nLoad: ${load}\nNo Data`}
+                                    title={cell
+                                      ? `Value: ${cell.value}\nStd Dev: ±${cell.std}\nSamples: ${cell.count}\nRPM: ${rpm} | Load: ${load}`
+                                      : `RPM: ${rpm} | Load: ${load} — No Data`}
                                     style={{
-                                      width: "55px",
-                                      height: "36px",
-                                      backgroundColor: color,
-                                      opacity: opacity,
-                                      border: "1px solid rgba(255,255,255,0.08)",
-                                      textAlign: "center",
-                                      color: cell ? "white" : "rgba(255,255,255,0.1)",
-                                      fontSize: "0.7rem",
-                                      fontWeight: "bold",
-                                      transition: "all 0.15s ease",
-                                      cursor: cell ? "crosshair" : "default"
+                                      width: "48px", height: "34px",
+                                      backgroundColor: color, opacity: opacity,
+                                      border: "1px solid rgba(255,255,255,0.07)",
+                                      textAlign: "center", verticalAlign: "middle",
+                                      color: cell ? "white" : "rgba(255,255,255,0.08)",
+                                      fontSize: showHeatmapCount ? "0.65rem" : "0.7rem",
+                                      fontWeight: "bold", transition: "all 0.15s ease",
+                                      cursor: cell ? "crosshair" : "default",
                                     }}
                                   >
-                                    {cell ? cell.afr.toFixed(1) : ""}
+                                    {displayVal}
                                   </td>
                                 );
                               })}
@@ -1411,26 +1628,37 @@ export default function Home() {
                           ))}
                         </tbody>
                       </table>
-                    );
-                  })()}
-                </div>
-                {/* Global Heatmap Legend */}
-                <div style={{ display: "flex", justifyContent: "center", gap: "20px", marginTop: "20px", fontSize: "0.7rem", color: "#64748b" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
-                    <div style={{ width: "12px", height: "12px", background: "#2563eb", borderRadius: "2px" }} /> Rich (≤12.0)
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
-                    <div style={{ width: "12px", height: "12px", background: "#3b82f6", borderRadius: "2px" }} /> Mid-Rich (12.0-12.5)
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
-                    <div style={{ width: "12px", height: "12px", background: "#10b981", borderRadius: "2px" }} /> Optimal (12.5-13.0)
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
-                    <div style={{ width: "12px", height: "12px", background: "#f59e0b", borderRadius: "2px" }} /> Mid-Lean (13.0-14.5)
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
-                    <div style={{ width: "12px", height: "12px", background: "#ef4444", borderRadius: "2px" }} /> Lean (≥14.5)
-                  </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Dynamic Legend */}
+                <div style={{ display: "flex", justifyContent: "center", gap: "14px", marginTop: "16px", fontSize: "0.7rem", color: "#64748b", flexWrap: "wrap" }}>
+                  {(globalHeatmapSignal === 'afr' ? [
+                    { color: "#2563eb", label: "Rich (≤12.0)" },
+                    { color: "#3b82f6", label: "Mid-Rich (12–12.5)" },
+                    { color: "#10b981", label: "Optimal (12.5–13)" },
+                    { color: "#f59e0b", label: "Mid-Lean (13–14.5)" },
+                    { color: "#ef4444", label: "Lean (≥14.5)" },
+                  ] : globalHeatmapSignal === 'ignition' ? [
+                    { color: "#1e3a8a", label: "Retarded (<10°)" },
+                    { color: "#3b82f6", label: "Conservative (10–20°)" },
+                    { color: "#10b981", label: "Optimal (20–30°)" },
+                    { color: "#f59e0b", label: "Aggressive (30–38°)" },
+                    { color: "#ef4444", label: "Dangerous (>38°)" },
+                  ] : [
+                    { color: "#1e3a8a", label: "Vacuum (<100 kPa)" },
+                    { color: "#3b82f6", label: "Atmosphere (100–130)" },
+                    { color: "#10b981", label: "Light Boost (130–160)" },
+                    { color: "#f59e0b", label: "High Boost (160–200)" },
+                    { color: "#ef4444", label: "Overboost (>200)" },
+                  ]).map((item) => (
+                    <div key={item.label} style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+                      <div style={{ width: "12px", height: "12px", background: item.color, borderRadius: "2px" }} />
+                      {item.label}
+                    </div>
+                  ))}
+                  {showHeatmapCount && <span style={{ color: "#94a3b8", fontStyle: "italic", marginLeft: "8px" }}>📊 Showing sample count</span>}
                 </div>
               </div>
             )}

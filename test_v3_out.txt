@@ -1,0 +1,18 @@
+C:\Users\Dell\projects\project-root\backend\main.py:8: FutureWarning: 
+
+All support for the `google.generativeai` package has ended. It will no longer be receiving 
+updates or bug fixes. Please switch to the `google.genai` package as soon as possible.
+See README for more details:
+
+https://github.com/google-gemini/deprecated-generative-ai-python/blob/main/README.md
+
+  import google.generativeai as genai
+--- Starting Sensitivity Diagnostics (V3) Verification ---
+Low Throttle Case: Score=60, Alerts=['Critical: Persistent Rich Burn Detected (High CO under Load)']
+Ghost Torque Case: Score=0, Alerts=['Critical: Physical Paradox - High Power Output at Zero Throttle.', 'Critical: Physical Paradox - High Force detected at Zero Throttle.']
+Vacuum Paradox Case: Score=75, Alerts=['Warning: Vacuum Paradox - Boost detected while throttle is closed.']
+Emission Spike Case: Score=80, Alerts=['Warning: Abnormal Emission Spikes (Potential Rich Burn) detected relative to session baseline.']
+REAL DATA (EngineFaultDB Sample): Score=0, Status=Critical
+Found Alerts: ['Critical: Physical Paradox - High Power Output at Zero Throttle.', 'Critical: Physical Paradox - High Force detected at Zero Throttle.', 'Warning: High HC Emissions Detected (Incomplete Combustion)']
+REAL FAULT DATA (EngineFaultDB Chunk): Score=0, Alerts=['Critical: Physical Paradox - High Power Output at Zero Throttle.', 'Critical: Physical Paradox - High Force detected at Zero Throttle.', 'Critical: Persistent Rich Burn Detected (High CO under Load)']
+--- Sensitivity Verification Passed ---

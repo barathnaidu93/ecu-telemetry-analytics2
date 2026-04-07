@@ -1,26 +1,44 @@
-@import "tailwindcss";
+/* ECU Telemetry Analytics — Global Base Styles */
 
+/* Apply the Inter variable font loaded via next/font as the base UI font.
+   All pages inherit this, so page.tsx inline fontFamily references will
+   resolve to the actually-loaded Inter typeface. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #e2e8f0;
+  --background: #0B0F19;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+html,
 body {
-  background: var(--background);
+  margin: 0;
+  padding: 0;
+  /* Use the CSS variable exposed by next/font/google in layout.tsx.
+     Falls back to system sans-serif if the variable isn't available. */
+  font-family: var(--font-inter), 'Segoe UI', system-ui, -apple-system, sans-serif;
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--background);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling for dark theme consistency */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.03);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
 }

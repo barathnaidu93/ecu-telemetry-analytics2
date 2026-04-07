@@ -6,6 +6,9 @@ env/
 venv/
 .env
 
+# Runtime artifacts — never commit logs from debug sessions
+*.log
+
 # Node
 node_modules/
 .next/
@@ -17,7 +20,8 @@ build/
 *.csv
 *.bin
 !EngineFaultDB_Final.csv
-!csv logs/*.csv
+# NOTE: directory is "csv_logs" (underscore), not "csv logs" with a space
+!csv_logs/*.csv
 
 # Agent/AI Artifacts
 .agent/
